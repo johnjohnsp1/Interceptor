@@ -245,7 +245,7 @@ function HttpGet([string] $URI, [string] $httpMethod, [string[]] $requestString,
 		$request.KeepAlive = $false
 		$request.ProtocolVersion = [System.Net.Httpversion]::version10
 		$request.ServicePoint.ConnectionLimit = 1
-		if($proxy) { $request.Proxy = $proxy }
+		if($proxy -ne $null) { $request.Proxy = $proxy }
 		$request.Method = $httpMethod
 		$request.AllowAutoRedirect = $false #Just let the browser follow the redirects..
 		$request.AutomaticDecompression = [System.Net.DecompressionMethods]::None
