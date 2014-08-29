@@ -233,14 +233,7 @@ function GetResponse ([System.Net.WebResponse] $response)
 		$response.Close()
 	}
 		
-			
-		
-		
-	
-	
-	
-	
-	
+
 }
 
 function HttpGet([string] $URI, [string] $httpMethod, [string[]] $requestString, [System.Net.WebProxy] $proxy)
