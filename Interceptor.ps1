@@ -249,7 +249,7 @@ function HttpGet([string] $URI, [string] $httpMethod, [string[]] $requestString,
 		$request.Method = $httpMethod
 		$request.AllowAutoRedirect = $false #Just let the browser follow the redirects..
 		$request.AutomaticDecompression = [System.Net.DecompressionMethods]::None
-		$request.ReadWriteTimeout = 320000
+		$request.ReadWriteTimeout = 32000 
 		
 		For ($i = 1; $i -lt $requestString.Length; $i++)
 		{
