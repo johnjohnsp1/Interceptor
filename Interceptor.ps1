@@ -2,7 +2,7 @@
 # Created By Casey Smith
 # @subTee Twitter
 # 8-28-2014
-# 2.0.8
+# 2.0.17
 # Requires Local Administrator Privileges (Start PowerShell As Administrator)
 # Requires Manually changing the Browser Proxy Settings.
 # Listens for Incomint Requests on 8081, this is configurable.
@@ -111,52 +111,6 @@ function createCertificate([string] $certSubject, [bool] $isCA)
      
 }
 
-function GetSSLOutput ([System.Net.Security.SslStream] $stream) 
-{ 
-    ## Create a buffer to receive the response 
-    $buffer = new-object System.Byte[] 2048 
-    $encoding = new-object System.Text.UTF8Encoding
-    $outputBuffer = "" 
-    $foundMore = $false
-	Try
-	{
-    ## Read all the data available from the stream, writing it to the 
-    ## output buffer when done. 
-    do 
-    { 
-        ## Allow data to buffer for a bit 
-        start-sleep -m 500
-
-        ## Read what data is available 
-        $foundmore = $false 
-        $stream.ReadTimeout = 500
-
-        do 
-        { 
-            try 
-            { 
-                $read = $stream.Read($buffer, 0, $buffer.Length)
-
-                if($read -gt 0) 
-                { 
-                    $foundmore = $true 
-                    $outputBuffer += ($encoding.GetString($buffer, 0, $read)) #Get String...
-                } 
-            } catch { $foundMore = $false; $read = 0 } 
-        } while($read -gt 0) 
-    } while($foundmore)
-	
-	$outputBuffer 
-	
-	}
-	Catch
-	{
-		write-host "GetSSLOutput Error"
-		
-		write-host $error[0]
-	}
-}
-
 function GetResponse ([System.Net.WebResponse] $response)
 {
 	#returns a Byte[] from HTTPWebRequest, also for ExceptionHandling
@@ -179,7 +133,7 @@ function GetResponse ([System.Net.WebResponse] $response)
 		$requestStream = $response.GetResponseStream()
 		
 		$rstring = $rawProtocolVersion + " " + $rawStatusCode + " " + $rawStatusDescription + "`r`n" + $rawHeadersString.ToString() + "`r`n"
-		$enc = [system.Text.Encoding]::UTF8
+		$enc = [System.Text.Encoding]::UTF8
 		[byte[]] $rawHeaderBytes = $enc.GetBytes($rstring)
 		
 		Write-Host $rstring -Fore Yellow
@@ -359,6 +313,8 @@ function DoHttpProcessing([System.Net.Sockets.TcpClient] $HTTPclient, [System.Ne
 			
 			$sslStream = New-Object System.Net.Security.SslStream($clientStream , $false)
 			
+			$sslStream.ReadTimeout = 1
+			
 			$sslcertfake = (Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Subject -match $domainParse[0]  })
 			if ($sslcertfake -eq $null)
 			{
@@ -366,13 +322,19 @@ function DoHttpProcessing([System.Net.Sockets.TcpClient] $HTTPclient, [System.Ne
 			}
 			
 			$sslStream.AuthenticateAsServer($sslcertfake, 0, [System.Security.Authentication.SslProtocols]::Ssl3 , 1)
-			$sslStream.Flush()
-			$SSLRequest = GetSSLOutput $sslStream 
-			#Check Response...
-			if($SSLRequest -eq $null)
-			{
-				Write-Host "We Got No SSL Request"
-			}
+			
+			
+			$sslbyteArray = new-object System.Byte[] 2048
+			[byte[]] $sslbyteClientRequest
+
+			do #Now loop through and process the bytes received...
+			 {
+			 [int] $NumBytesRead = $sslStream.Read($sslbyteArray, 0, $sslbyteArray.Length) #Read inbound bytes into buffer.
+			 $sslbyteClientRequest += $sslbyteArray[0..($NumBytesRead - 1)]  #Emit raw bytes.
+			 } While ($sslStream.DataAvailable) 
+			
+			$SSLRequest = $enc.GetString($sslbyteClientRequest)
+			
 			write-host $SSLRequest -fore Cyan
 			
 			[string[]] $SSLrequestArray = ($SSLRequest -split '[\r\n]') |? {$_} 
@@ -381,19 +343,29 @@ function DoHttpProcessing([System.Net.Sockets.TcpClient] $HTTPclient, [System.Ne
 			$secureURI = "https://" + $domainParse[0] + $SSLmethodParse[1]
 			
 			[byte[]] $byteResponse =  HttpGet $secureURI $SSLmethodParse[0] $SSLrequestArray $proxy
-			
+			Try
+			{
 			$sslStream.Write($byteResponse, 0, $byteResponse.Length)
-					
+			}
+			Catch
+			{
+				Write-Host "SSL Write Back Error"
+			}
 			
 		}#End CONNECT/SSL Processing
 		
 		if( ($methodParse[0] -ceq "GET") -Or ($methodParse[0] -ceq "POST") )
 		{
-			
 			Write-Host $requestString -Fore Magenta
 			[byte[]] $proxiedResponse = HttpGet $methodParse[1] $methodParse[0] $requestArray $proxy
-			$clientStream.Write($proxiedResponse, 0, $proxiedResponse.Length)
-			
+			Try
+			{
+				$clientStream.Write($proxiedResponse, 0, $proxiedResponse.Length)	
+			}
+			Catch
+			{
+				Write-Host "Write Back Error"
+			}
 		}#End Unsecure Proxy
 		
 			$HTTPclient.Close()		
@@ -420,7 +392,8 @@ function Main()
 	$port = 8081
 	$endpoint = New-Object System.Net.IPEndPoint ([system.net.ipaddress]::any, $port)
 	$listener = New-Object System.Net.Sockets.TcpListener $endpoint
-	
+	$listener.Server.ReceiveTimeout = 60000
+	$listener.Server.SendTimeout = 60000
 	$listener.Start()
 	
 	<#
@@ -428,10 +401,11 @@ function Main()
 		TODO Automate 
 		$upstreamProxy = New-Object System.Net.WebProxy("127.0.0.1", 8888)
 		OR
-		$upstreamProxy = $null
+		$upstreamProxy = $null #Means Direct Connection
+		
 	#>
 	
-	$upstreamProxy = $null #New-Object System.Net.WebProxy("", 8888) 
+	$upstreamProxy = $null # New-Object System.Net.WebProxy("127.0.0.1", 8888) 
 	
 	while($true){
 					$client = New-Object System.Net.Sockets.TcpClient
@@ -441,6 +415,7 @@ function Main()
 						#TODO Suboptimal Connections...But works for demonstration
 						$client = $listener.AcceptTcpClient()
 						DoHttpProcessing $client $upstreamProxy
+					
 					}
 					Catch [System.Exception]
 					{
@@ -450,7 +425,7 @@ function Main()
 					}
 					Finally
 					{
-						$client.Close()
+						
 					}
 
 	}
